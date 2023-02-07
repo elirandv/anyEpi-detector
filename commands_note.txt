@@ -1,0 +1,153 @@
+
+############## prerarations #########################
+
+#main folder:
+cd /scratch300/galgoldner/
+
+#open new screen
+screen -S "name"
+screen -ls
+#ctrl+a, ctrl+d - unload currant screen
+
+#kill screen
+screen -X -S "name"
+
+#enter to compute 300:
+qsub -I -q hugemem -l nodes=compute-0-300
+
+#load tayaki lib
+singularity shell --contain --nv --bind /scratch300/galgoldner /powerapps/share/singularity/images/taiyaki/taiyaki.simg
+#only our scripts lib
+module load python/python-anaconda3.6.5 gcc/gcc-8.2.0
+
+
+##GPU OPS##
+#how mani GPUS available
+nvidia-smi
+
+#current qsub gpu: 
+qstat | grep gpu
+
+#select num of GPUS: (defualt=1)
+qsub -q gpu -I -l gpus=2
+qsub -q gpu -I -lngpus=2
+
+#terminate qsub:
+qdel 9262538.power8
+
+############## current work background #########################
+
+#timestamp each command begin and end time to log
+date>log.txt && "command" && date>>log.txt
+
+#general info about BRCA1
+https://en.wikipedia.org/wiki/BRCA1
+
+#Guppy command docs:
+https://community.nanoporetech.com/protocols/Guppy-protocol/v/gpb_2003_v1_revo_14dec2018/guppy-basecaller-and-guppy-basecaller-server
+
+#Quickstart tutorial - calling methylation with nanopolish:
+https://nanopolish.readthedocs.io/en/latest/quickstart_call_methylation.html#
+
+המטרה כרגע לבצע גופי וננופוליש ולגלות את המטילציות בדאטה של הטוטוריאלס
+לאחר מכן בניסויים של יעל 3,4,5
+
+#command line for Guppy: 
+/scratch300/galgoldner/Guppy/ont-guppy/bin/guppy_basecaller --config dna_r9.4.1_450bps_modbases_dam-dcm-cpg_hac.cfg --fast5_out [other options
+
+#cfg files:
+-c dna_r9.4.1_450bps_modbases_dam-dcm-cpg_hac_prom.cfg - Guppy 3.4.4 
+-c dna_r9.4.1_450bps_flipflop.cfg -???
+-c dna_r9.4.1_450bps_modbases_dam-dcm-cpg_hac.cfg --fast5_out
+
+
+#data location:
+-i /scratch300/galgoldner/methylation_analysis/raw_fast5/20190514_1024_BRCA1_enrichment_4_tiling/fast5/fail/ -s /scratch300/galgoldner/methylation_analysis/results/4th/fail/ --cpu_threads_per_caller 14 --num_callers 1 -c dna_r9.4.1_450bps_hac.cfg
+
+#next step:
+	find out if guppy returns 2 fasta files
+	discover which char\s describe the modification in the fasta file (in the nanopore lib that gal sent)
+	for the relevant files - find the modifications
+	in the article that gal sent there is a pic with the comparison of few reads, there is a git link for intruction to it
+	make the "self" alignment of the reads at a relevant section (one with metylations)
+	make a graph using the git instructions
+
+############## current workflow and commands #########################
+current work nanopolish: 
+guppy command test data sample:
+date>nanolog.txt && 
+/scratch300/galgoldner/Guppy/ont-guppy/bin/guppy_basecaller --print_workflows -c dna_r9.4.1_450bps_modbases_dam-dcm-cpg_hac.cfg -i /scratch300/galgoldner/methylation_analysis/test/raw_fast5_sample/ --device cuda:1 --cpu_threads_per_caller 16 --num_callers 1 --fast5_out --save_path /scratch300/galgoldner/methylation_analysis/test/output/ -r --progress_stats_frequency 120
+&& date>>nanolog.txt
+
+# guppy command on nanopolish tutorials data:
+date>nanolog.txt && 
+/scratch300/galgoldner/Guppy/ont-guppy/bin/guppy_basecaller --print_workflows -c dna_r9.4.1_450bps_modbases_dam-dcm-cpg_hac.cfg -i /scratch300/galgoldner/methylation_analysis/methylation_example/fast5_files/ --device cuda:1 --cpu_threads_per_caller 16 --num_callers 1 --fast5_out --save_path /scratch300/galgoldner/methylation_analysis/methylation_example/results -r --progress_stats_frequency 120
+&& date>>nanolog.txt
+
+# print ModBaseProbs table to see predicted modifications in fast5 outputs:
+## check read ID (log_lik_ratio=+19) 5003239 5003255 f77701dc-077a-47e8-827c-772550a48464
+cd into folder
+ll | grep "read ID"
+/scratch300/galgoldner/python_scripts/read_fast5_mod_base_table.py -r /scratch300/galgoldner/methylation_analysis/methylation_example/basecalled/workspace/ -f 
+
+# unify fastq:
+cat  /scratch300/galgoldner/methylation_analysis/methylation_example/results/*.fastq > /scratch300/galgoldner/methylation_analysis/methylation_example/output.fastq
+cat *.fastq > output.fastq
+
+# nanopolishn indexing:
+/scratch300/galgoldner/nanopolish/nanopolish index -d fast5_files/ output.fastq --verbose
+/scratch300/galgoldner/nanopolish/nanopolish index -d workspace/ output.fastq --verbose
+
+# Align the reads to the reference:
+/scratch300/galgoldner/minimap2/minimap2 -a -x map-ont reference.fasta output.fastq > aligned_output.sam
+/scratch300/galgoldner/minimap2/minimap2 -a -x map-ont /scratch300/galgoldner/methylation_analysis/hg38.fa output.fastq > output.sam
+
+# Convert the sam file to a bam file:
+samtools view -S aligned_output.sam -b > aligned_output.bam
+samtools view -S output.sam -b > output.bam
+
+# Sort the bam file:
+-T tmp כאשר אין כותרת לקובץ סאם
+samtools sort aligned_output.bam aligned_output.sorted
+samtools index aligned_output.sorted.bam
+samtools sort output.bam output.sorted
+samtools index output.sorted.bam
+
+# Run the nanopolish methylation caller:
+/scratch300/galgoldner/nanopolish/nanopolish call-methylation -t 8 -r output.fastq -b aligned_output.sorted.bam -g reference.fasta -w "chr20:5,000,000-10,000,000" > methylation_calls.tsv --verbose
+/scratch300/galgoldner/nanopolish/nanopolish call-methylation -t 8 -r output.fastq -b output.sorted.bam -g /scratch300/galgoldner/methylation_analysis/hg38.fa > methylation_calls.tsv --verbose
+
+
+# get the methylation freq per reference position:
+/scratch300/galgoldner/nanopolish/scripts/calculate_methylation_frequency.py methylation_calls.tsv > methylation_frequency.tsv
+/scratch300/galgoldner/nanopolish/nanopolish call-methylation -t 8 -r output.fastq -b aligned_output.sorted.bam -g reference.fasta -w "chr20:5,000,000-10,000,000" > methylation_calls.tsv --verbose
+/scratch300/galgoldner/nanopolish/scripts/calculate_methylation_frequency.py methylation_calls.tsv > methylation_frequency.tsv
+/scratch300/galgoldner/nanopolish/nanopolish call-methylation -t 8 -r output.fastq -b output.sorted.bam -g /scratch300/galgoldner/methylation_analysis/hg38.fa -w "chr20:5,000,000-10,000,000" > methylation_calls.tsv --verbose
+
+
+-barcode 12 run
+-get RF feature importance list and update weights
+
+
+
+
+
+
+לשאול את גל:
+להוסיף את כלל פקודות הגופי, ננופוליש, מיני ןכן לפאץ' באופן קבוע!?
+
+משימות להיום עד 13:
+לסיים את תהליך הריצוף של הטוטוריאלס - V
+לפתוח את קבצי ה5 החדשים ולהבין אם יש מטילציות - X
+כמו גם להסתכל בתוצר הננופוליש בכדי לראות שהצלחתי בטוטוריאל - V
+
+להמשך:
+לבצע את אותו תהליך - מחדש (פלט של 5) על הניסויים 3,4,5
+להוציא פלוט של הפלט אחרון (שכיכות מטילציות לפי רייד
+להגדיר מן סרגל של כל הגנום כך שצבע "חם
+יותר יעיד על יותר זיהוי מטילציות
+לפי הרשיו בקובץ
+וגם שישהיה אינדיקציה על הכמות סה"כאשר
+
+להגדיר משתנה סף זאת אומרת שיציג רק מה שמעל הרשיו שהוגדר
+
