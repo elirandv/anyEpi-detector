@@ -19,6 +19,9 @@ conda env create --name $ANYEPI_ENV_NAME --file environment.yml
 echo "activate ${ANYEPI_ENV_NAME} conda environment"
 conda activate $ANYEPI_ENV_NAME
 
+HDF5_PLUGIN_PATH=$(whereis hdf5)
+export HDF5_PLUGIN_PATH=$HDF5_PLUGIN_PATH/lib/plugin/
+
 #echo "install requirements.txt"
 #pip install -r requirements.txt
 #

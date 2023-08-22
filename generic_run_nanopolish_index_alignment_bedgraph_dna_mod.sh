@@ -2,12 +2,11 @@ BARCODE=$1
 EXPERIMENT_ROOT_DIR=$2
 REF_SEQ=$3
 INPUT_READS_FILE_NAME="reads_barcode${BARCODE}"
-ANYEPI_ENV_NAME="5gmc_n3_detector"
 
 WORKINK_DIR_PREFIX="${EXPERIMENT_ROOT_DIR}/barcode${BARCODE}"
-FAST5_FILES_DIR="${WORKINK_DIR_PREFIX}/"
+FAST5_FILES_DIR="${EXPERIMENT_ROOT_DIR}/barcode${BARCODE}/"
 
-OUTPUT_DIR="${WORKINK_DIR_PREFIX}_anyEpi_outputs"
+OUTPUT_DIR="${EXPERIMENT_ROOT_DIR}/barcode${BARCODE}_epi_basecaller_outputs"
 
 FASTQ_FILES_DIR="${OUTPUT_DIR}/fastq/"
 FASTQ_FILE_PATH="${FASTQ_FILES_DIR}/${INPUT_READS_FILE_NAME}.fastq"
@@ -20,12 +19,10 @@ NANOPOLISH_PATH="nanopolish"
 MINIMAP_PATH="minimap2"
 BED_TOOLS_PATH=bedtools
 
-echo "activate ${ANYEPI_ENV_NAME} conda environment"
-conda activate $ANYEPI_ENV_NAME
-
+ANYEPI_ENV_NAME="smash_seq_env"
 if [ "${CONDA_DEFAULT_ENV}" != "${ANYEPI_ENV_NAME}" ]; then
-  raise error "Error: ${ANYEPI_ENV_NAME} conda environment activation Failed!"
-  exit -1
+  echo "conda activate ${ANYEPI_ENV_NAME}"
+  conda activate $ANYEPI_ENV_NAME
 else
   echo "${CONDA_DEFAULT_ENV} conda environment is active"
 fi
@@ -57,6 +54,13 @@ if [ -f "${FASTQ_FILE_PATH}" ]; then
     echo -e "[${FASTQ_FILE_PATH}] exists"
 else 
     cat ${FASTQ_FILES_DIR}/*/*.fastq >> ${FASTQ_FILE_PATH}
+fi
+
+if [ ! -s "${FASTQ_FILE_PATH}" ]; then
+        # The file is empty.
+	    echo -e "[${FASTQ_FILE_PATH}] is empty"
+	    rm -f ${FASTQ_FILE_PATH}
+      exit -1
 fi
 
 echo -e "\nPhase 2: convert big fastq to fasta format"
@@ -98,23 +102,25 @@ echo -e "\nPhase 5: Sort the bam file"
 if [ -f "${OUTPUT_FILE}.sorted.bam" ]; then
     echo -e "[${OUTPUT_FILE}.sorted.bam] exists"
 else 
-	samtools sort ${OUTPUT_FILE}.bam ${OUTPUT_FILE}.sorted
+	samtools sort ${OUTPUT_FILE}.bam -o ${OUTPUT_FILE}.sorted.bam
 	samtools index ${OUTPUT_FILE}.sorted.bam
+fi
+
+echo -e "\nCreate sam file from bam"
+if [ -f "${OUTPUT_FILE}.sorted.sam" ]; then
+  echo -e "[${OUTPUT_FILE}.sorted.sam] exists"
+else
+  samtools view -h ${OUTPUT_FILE}.sorted.bam > ${OUTPUT_FILE}.sorted.sam
 fi
 
 echo -e "\nCreate strand specific sam files"
 if [ -f "${OUTPUT_FILE}.forward.sam" ] && [ -f "${OUTPUT_FILE}.reverse.sam" ]; then
     echo -e "[${OUTPUT_FILE}.forward.sam] exists"
-	echo -e "[${OUTPUT_FILE}.reverse.sam] exists"
+    echo -e "[${OUTPUT_FILE}.reverse.sam] exists"
 else
-	if [ -f "${OUTPUT_FILE}.forward.bam" ] && [ -f "${OUTPUT_FILE}.reverse.bam" ]; then
-		echo -e "[${OUTPUT_FILE}.forward.bam] exists"
-		echo -e "[${OUTPUT_FILE}.reverse.bam] exists"
-	else
-		samtools view -h ${OUTPUT_FILE}.sorted.bam > ${OUTPUT_FILE}.forward.sam
-		samtools view -h ${OUTPUT_FILE}.sorted.bam > ${OUTPUT_FILE}.reverse.sam
-		awk -v output_file="${OUTPUT_FILE}" '{ if($2==0) {print $0 >> output_file".forward.sam"} if($2==16) {print $0 >> output_file".reverse.sam"}}' ${OUTPUT_FILE}.sam
-	fi
+  header=$(cat "${OUTPUT_FILE}.sorted.sam" | grep '^[^@]' --line-number  | head -n 1 | cut -d':' -f1)
+  echo "sorted.sam header length=${header}"
+  awk -v output_file="${OUTPUT_FILE}" -v header="${header}" '{if(NR<header) {print >> output_file".forward.sam"; print >> output_file".reverse.sam";} if(NR>=header && $2==0) {print $0 >> output_file".forward.sam"} if(NR>=header && $2==16) {print $0 >> output_file".reverse.sam"}}' ${OUTPUT_FILE}.sorted.sam
 fi
 
 echo -e "\nCreate forward reads bam file"
